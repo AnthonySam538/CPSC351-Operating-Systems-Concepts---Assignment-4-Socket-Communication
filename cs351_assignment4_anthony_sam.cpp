@@ -14,66 +14,104 @@ void sendMessage()
 {
     mtx.lock();
 
-    const char* sourceIP = "127.0.0.1";
     const char* destinationIP = "127.0.0.1";
-    sockaddr_in source;
+    const short destinationPort = 3514;
     sockaddr_in destination;
-    WSAData data;
+    WSAData wsadata;
+    const short maximumMessageLength = 2048;
+    char myMessage[maximumMessageLength];
+    const char terminationString[] = "-disconnect";
 
-    //Initialize the Windows Socket
-    WSAStartup(MAKEWORD(2, 2), &data);
+    //Initialize a Windows Socket
+    WSAStartup(MAKEWORD(2, 2), &wsadata);
 
     //Create our sender socket to send messages
-    SOCKET mySocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    SOCKET senderSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
     //Bind the socket to the specified IP address
-    source.sin_family = AF_INET;
-    inet_pton(AF_INET, sourceIP, &source.sin_addr.s_addr);
-    source.sin_port = htons(0);
-
     destination.sin_family = AF_INET;
     inet_pton(AF_INET, destinationIP, &destination.sin_addr.s_addr);
-    destination.sin_port = htons(3514);
+    destination.sin_port = htons(destinationPort);
+    bind(senderSocket, (sockaddr*)&destination, sizeof(destination));
 
-    bind(mySocket, (sockaddr*)&source, sizeof(source));
+    mtx.unlock();
 
     //The rest of the program
-    const short maximumMessageLength = 2048;
-    const char terminationString[] = "--exit";
-    char myMessage[maximumMessageLength];
-
     while (true)
     {
-        cout << "Your message (enter \"--exit\" to exit the program): ";
-        mtx.unlock();
+        cout << "Say something (Enter in \"-disconnect\" to disconnect): ";
         cin.getline(myMessage, maximumMessageLength);
 
-        mtx.lock();
         //if the user did not enter the termination string
         if (strcmp(myMessage, terminationString))
-            sendto(mySocket, myMessage, strlen(myMessage), 0, (sockaddr*)&destination, sizeof(destination));
+        {
+            sendto(senderSocket, myMessage, strlen(myMessage), 0, (sockaddr*)&destination, sizeof(destination));
+            cout << "You (" << destinationIP << ':' << destinationPort << ") sent: " << myMessage << endl;
+        }
         //if the user entered the termination string
         else
         {
             cout << "Terminating the program...";
 
-            closesocket(mySocket);
+            closesocket(senderSocket);
             WSACleanup();
 
-            mtx.unlock();
-
-            return;
+            exit(0);
         }
     }
 }
 
-//void receiveMessage()
-//{}
+void receiveMessage()
+{
+    mtx.lock();
+
+    const char* sourceIP = "127.0.0.1";
+    const unsigned short port = 3515;
+    sockaddr_in receiverAddress;
+    int receiverAddressSize = sizeof(receiverAddress);
+    WSADATA wsaData;
+    const short maximumMessageLength = 2048;
+    char receivedMessage[maximumMessageLength];
+
+    //Initialize the Windows Socket
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    //Create our receiver socket to receive messages
+    SOCKET receiverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    //Bind the receiver socket to the specified IP address
+    receiverAddress.sin_family = AF_INET;
+    inet_pton(AF_INET, sourceIP, &receiverAddress.sin_addr.s_addr);
+    receiverAddress.sin_port = htons(port);
+    bind(receiverSocket, (sockaddr*)&receiverAddress, sizeof(receiverAddress));
+
+    mtx.unlock();
+
+    while (true)
+    {
+        //Call the recvfrom function to receive messages
+        recvfrom(receiverSocket, receivedMessage, maximumMessageLength, 0, (sockaddr*)&receiverAddress, &receiverAddressSize);
+
+        mtx.lock();
+
+        cout << endl << sourceIP << ':' << port << " sent: " << receivedMessage << endl;
+
+        mtx.unlock();
+
+        ////Close the socket when finished receiving datagrams
+        //cout << "Finished receiving. Closing socket.\n";
+        //closesocket(receiverSocket);
+        //WSACleanup();
+    }
+}
 
 int main()
 {
     thread sendThread(sendMessage);
+    thread receiveThread(receiveMessage);
+
     sendThread.join();
+    receiveThread.join();
 
     return 0;
 }
